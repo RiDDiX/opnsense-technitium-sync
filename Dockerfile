@@ -2,8 +2,6 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# No extra system deps needed - sync loop and dashboard run in Python
-
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
