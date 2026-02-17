@@ -1,23 +1,13 @@
 #!/bin/bash
 set -e
 
-# Setup cron if SYNC_INTERVAL_MINUTES is set
-INTERVAL=${SYNC_INTERVAL_MINUTES:-5}
-
-# Create cron job
-echo "*/$INTERVAL * * * * cd /app && python sync.py --once >> /proc/1/fd/1 2>&1" > /etc/cron.d/dns-sync
-chmod 0644 /etc/cron.d/dns-sync
-
-# Start cron
-cron
-
-echo "DNS Sync started with ${INTERVAL} minute interval"
-echo "OPNsense: $OPNSENSE_URL"
+echo "=== OPNsense Technitium DNS Sync ==="
+echo "OPNsense:  $OPNSENSE_URL"
 echo "Technitium: $TECHNITIUM_URL"
-echo "Zone: $DNS_ZONE"
+echo "Zone:       $DNS_ZONE"
+echo "Interval:   ${SYNC_INTERVAL_MINUTES:-5} min"
+echo "Dashboard:  ${DASHBOARD_ENABLED:-true} (port ${DASHBOARD_PORT:-8099})"
+echo "======================================"
 
-# Run once immediately
-python sync.py --once || true
-
-# Keep container running and log cron output
-tail -f /var/log/syslog 2>/dev/null || tail -f /dev/null
+# Run in continuous mode (built-in scheduler + dashboard)
+exec python sync.py

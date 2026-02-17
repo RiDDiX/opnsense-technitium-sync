@@ -90,6 +90,8 @@ LOG_LEVEL=INFO
 | `SYNC_INTERVAL_MINUTES` | Sync interval in minutes | `5` |
 | `LOG_LEVEL` | Log level (`DEBUG`, `INFO`, `WARNING`) | `INFO` |
 | `STATIC_ENTRIES` | Manual static entries | *(empty)* |
+| `DASHBOARD_ENABLED` | Enable web dashboard | `true` |
+| `DASHBOARD_PORT` | Dashboard port | `8099` |
 
 ### Static Entries
 
@@ -201,6 +203,25 @@ docker-compose exec dns-sync python sync.py --discover
 ```
 
 This tests all known DHCP API endpoints (KEA, Dnsmasq, ISC, Unbound) and reports which ones are available and what data they return.
+
+---
+
+## Dashboard
+
+The tool includes a built-in **web dashboard** for monitoring sync status in real-time.
+
+**Access:** `http://<container-ip>:8099`
+
+The dashboard shows:
+- **Sync status** — healthy/error badge, last & next sync time
+- **Statistics** — total records, added/updated/deleted counts, sync count, errors
+- **DNS Records table** — all current records with search/filter
+- **Live logs** — recent log entries with level filter (ERROR/WARNING/INFO)
+- **Auto-refresh** every 15 seconds
+
+The dashboard is **read-only** and requires no authentication. To disable it, set `DASHBOARD_ENABLED=false`.
+
+> **Note:** The dashboard uses Tailwind CSS via CDN. The container needs outbound internet access on first load, or the browser needs access to `cdn.tailwindcss.com`.
 
 ---
 

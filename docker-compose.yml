@@ -22,8 +22,14 @@ services:
       
       # Optional: Static entries (comma-separated: hostname=ip,hostname2=ip2)
       STATIC_ENTRIES: ${STATIC_ENTRIES:-}
+      
+      # Dashboard
+      DASHBOARD_ENABLED: ${DASHBOARD_ENABLED:-true}
+      DASHBOARD_PORT: ${DASHBOARD_PORT:-8099}
     env_file:
       - .env
+    ports:
+      - "${DASHBOARD_PORT:-8099}:${DASHBOARD_PORT:-8099}"
     restart: unless-stopped
     networks:
       - dns-sync

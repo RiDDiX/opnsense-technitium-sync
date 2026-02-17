@@ -2,8 +2,7 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install cron for periodic sync
-RUN apt-get update && apt-get install -y cron && rm -rf /var/lib/apt/lists/*
+# No extra system deps needed - sync loop and dashboard run in Python
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -13,5 +12,10 @@ COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 
 ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8099
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8099/health')" || exit 1
 
 ENTRYPOINT ["./entrypoint.sh"]
