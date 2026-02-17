@@ -1,0 +1,13 @@
+.env
+.env.example
+.git
+.github
+.gitignore
+.dockerignore
+README.md
+LICENSE
+docker-compose.yml
+opnsensetechnitiumdnssync.png
+__pycache__
+*.pyc
+*.md

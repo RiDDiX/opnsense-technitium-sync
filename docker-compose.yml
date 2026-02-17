@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  dns-sync:
+    build: .
+    container_name: opnsense-technitium-sync
+    environment:
+      # OPNsense API
+      OPNSENSE_URL: ${OPNSENSE_URL:-https://opnsense.home.arpa}
+      OPNSENSE_API_KEY: ${OPNSENSE_API_KEY}
+      OPNSENSE_API_SECRET: ${OPNSENSE_API_SECRET}
+      OPNSENSE_VERIFY_SSL: ${OPNSENSE_VERIFY_SSL:-false}
+      
+      # Technitium DNS API
+      TECHNITIUM_URL: ${TECHNITIUM_URL:-http://technitium.home.arpa:5380}
+      TECHNITIUM_TOKEN: ${TECHNITIUM_TOKEN}
+      
+      # Sync Settings
+      DNS_ZONE: ${DNS_ZONE:-home.arpa}
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-5}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      
+      # Optional: Static entries (comma-separated: hostname=ip,hostname2=ip2)
+      STATIC_ENTRIES: ${STATIC_ENTRIES:-}
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - dns-sync
+
+networks:
+  dns-sync:
+    driver: bridge
