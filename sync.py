@@ -891,6 +891,8 @@ def get_dashboard_html():
         <div class="mt-6 text-center text-xs text-slate-600">
             OPNsense Technitium DNS Sync &middot;
             <a href="https://github.com/RiDDiX/opnsense-technitium-sync" target="_blank" class="text-slate-500 hover:text-brand-500">GitHub</a>
+            &middot;
+            <a href="https://www.paypal.me/RiDDiX93" target="_blank" class="text-slate-500 hover:text-brand-500">☕ Buy me a coffee</a>
         </div>
     </div>
 

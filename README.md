@@ -162,6 +162,16 @@ Every `SYNC_INTERVAL_MINUTES` the script:
 
 **SSL errors** — Set `OPNSENSE_VERIFY_SSL=false` for self-signed certs.
 
+## Support
+
+> [!NOTE]
+> Completely optional! This project will continue regardless of donations.
+> I maintain this in my free time because I believe in open source.
+
+If you find this useful, you can buy me a coffee:
+
+[![PayPal](https://img.shields.io/badge/PayPal-Donate-blue?logo=paypal&style=for-the-badge)](https://www.paypal.me/RiDDiX93)
+
 ## License
 
 MIT
