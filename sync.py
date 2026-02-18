@@ -748,19 +748,25 @@ class DNSSync:
 # --- Dashboard ---
 
 def create_dashboard_app():
-    from flask import Flask, jsonify, Response
+    from flask import Flask, jsonify, Response, send_file
     
     app = Flask(__name__)
     
-    # Suppress Flask request logging in production
     flask_log = logging.getLogger('werkzeug')
     flask_log.setLevel(logging.WARNING)
     
     DASHBOARD_HTML = get_dashboard_html()
+    LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'opnsensetechnitiumdnssync.png')
     
     @app.route('/')
     def index():
         return Response(DASHBOARD_HTML, mimetype='text/html')
+    
+    @app.route('/logo.png')
+    def logo():
+        if os.path.isfile(LOGO_PATH):
+            return send_file(LOGO_PATH, mimetype='image/png')
+        return Response(status=404)
     
     @app.route('/api/status')
     def api_status():
@@ -825,10 +831,8 @@ def get_dashboard_html():
         <!-- Header -->
         <div class="flex items-center justify-between mb-6">
             <div class="flex items-center gap-3">
-                <div class="w-10 h-10 bg-brand-600 rounded-lg flex items-center justify-center shrink-0">
-                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                    </svg>
+                <div class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" id="logo-container">
+                    <img src="/logo.png" alt="Logo" class="w-10 h-10 object-contain" onerror="this.parentElement.classList.add('bg-brand-600');this.outerHTML='<svg class=&quot;w-6 h-6 text-white&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; viewBox=&quot;0 0 24 24&quot;><path stroke-linecap=&quot;round&quot; stroke-linejoin=&quot;round&quot; stroke-width=&quot;2&quot; d=&quot;M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15&quot;/></svg>';">
                 </div>
                 <div>
                     <h1 class="text-xl font-bold text-white">DNS Sync Dashboard</h1>
