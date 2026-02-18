@@ -440,22 +440,35 @@ class TechnitiumAPI:
             return False
     
     def get_records(self, zone_name: str) -> List[Dict]:
-        params = {'zone': zone_name}
-        result = self._api_call('/zones/records', params)
+        params = {'zone': zone_name, 'domain': zone_name, 'listZone': 'true'}
+        result = self._api_call('/zones/records/get', params)
         
         if result.get('status') == 'ok':
             return result.get('response', {}).get('records', [])
+        log.warning(f"Konnte Records nicht abrufen: {result.get('errorMessage', 'unbekannt')}")
         return []
     
     def get_a_records(self, zone_name: str) -> Dict[str, str]:
         records = self.get_records(zone_name)
         a_records = {}
+        zone_suffix = '.' + zone_name
         
         for record in records:
-            if record.get('type') == 'A':
-                name = record.get('name', '').lower()
-                ip = record.get('value', '')
-                short_name = name.replace(f'.{zone_name}', '').replace(zone_name, '')
+            if record.get('type') != 'A':
+                continue
+            name = record.get('name', '').lower()
+            ip = record.get('rData', {}).get('ipAddress', '')
+            if not ip:
+                continue
+            
+            if name.endswith(zone_suffix):
+                short_name = name[:-(len(zone_suffix))]
+            elif name == zone_name:
+                short_name = '@'
+            else:
+                continue
+            
+            if short_name:
                 a_records[short_name] = ip
         
         return a_records
@@ -479,9 +492,14 @@ class TechnitiumAPI:
         if result.get('status') == 'ok':
             log.debug(f"Record hinzugefügt: {name}.{zone_name} -> {value}")
             return True
-        else:
-            log.error(f"Konnte Record nicht hinzufügen: {result}")
-            return False
+        
+        err = result.get('errorMessage', '')
+        if 'already exists' in err:
+            log.debug(f"Record existiert bereits: {name}.{zone_name} -> {value}")
+            return True
+        
+        log.error(f"Konnte Record nicht hinzufügen: {err}")
+        return False
     
     def delete_record(self, zone_name: str, name: str, record_type: str, value: Optional[str] = None) -> bool:
         if name and name != '@':
@@ -633,27 +651,36 @@ class DNSSync:
                 if hostname not in opnsense_hostnames and hostname not in manual_hostnames:
                     to_delete.append(hostname)
             
+            errors = 0
+            
             for hostname, ip in to_add:
                 log.info(f"Hinzufügen: {hostname}.{self.dns_zone} -> {ip}")
-                self.technitium.add_record(self.dns_zone, hostname, 'A', ip)
+                if not self.technitium.add_record(self.dns_zone, hostname, 'A', ip):
+                    errors += 1
             
             for hostname, ip in to_update:
                 log.info(f"Aktualisieren: {hostname}.{self.dns_zone} -> {ip}")
-                self.technitium.update_record(self.dns_zone, hostname, 'A', ip)
+                if not self.technitium.update_record(self.dns_zone, hostname, 'A', ip):
+                    errors += 1
             
             for hostname in to_delete:
                 if hostname in ('@', 'ns', 'www', 'mail'):
                     continue
-                else:
-                    log.info(f"Löschen: {hostname}.{self.dns_zone}")
-                    self.technitium.delete_record(self.dns_zone, hostname, 'A')
+                log.info(f"Löschen: {hostname}.{self.dns_zone}")
+                if not self.technitium.delete_record(self.dns_zone, hostname, 'A'):
+                    errors += 1
             
-            log.info(f"Sync complete: +{len(to_add)} ~{len(to_update)} -{len(to_delete)}")
+            log.info(f"Sync complete: +{len(to_add)} ~{len(to_update)} -{len(to_delete)}" + (f" ({errors} Fehler)" if errors else ""))
             
             with sync_state._lock:
                 sync_state.last_sync = datetime.now(timezone.utc).isoformat()
-                sync_state.last_sync_success = True
+                sync_state.last_sync_success = errors == 0
                 sync_state.sync_count += 1
+                sync_state.error_count += errors
+                if errors:
+                    sync_state.last_error = f"{errors} Records fehlgeschlagen"
+                else:
+                    sync_state.last_error = None
                 sync_state.records_added = len(to_add)
                 sync_state.records_updated = len(to_update)
                 sync_state.records_deleted = len(to_delete)
@@ -663,7 +690,7 @@ class DNSSync:
                     key=lambda x: x['hostname']
                 )
             
-            return True
+            return errors == 0
             
         except Exception as e:
             log.exception(f"Sync fehlgeschlagen: {e}")
