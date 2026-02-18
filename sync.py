@@ -761,7 +761,8 @@ def get_dashboard_html():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OPNsense Technitium DNS Sync</title>
+    <title>DNS Sync Dashboard</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔄</text></svg>">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -769,7 +770,7 @@ def get_dashboard_html():
             theme: {
                 extend: {
                     colors: {
-                        brand: { 50: '#eff6ff', 100: '#dbeafe', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 900: '#1e3a5f' }
+                        brand: { 50: '#eff6ff', 100: '#dbeafe', 400: '#60a5fa', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 900: '#1e3a5f' }
                     }
                 }
             }
@@ -777,147 +778,256 @@ def get_dashboard_html():
     </script>
     <style>
         body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
-        .fade-in { animation: fadeIn 0.3s ease-in; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-        .log-line { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.75rem; }
+        .log-line { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.7rem; line-height: 1.5; }
         ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #1e293b; }
-        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+        .sort-header { cursor: pointer; user-select: none; }
+        .sort-header:hover { color: #e2e8f0; }
+        .sort-header::after { content: ' ↕'; opacity: 0.3; font-size: 0.65rem; }
+        .sort-header.asc::after { content: ' ↑'; opacity: 0.8; }
+        .sort-header.desc::after { content: ' ↓'; opacity: 0.8; }
+        .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+        @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
     </style>
 </head>
 <body class="dark bg-slate-950 text-slate-200 min-h-screen">
     <div class="max-w-7xl mx-auto px-4 py-6">
+
         <!-- Header -->
-        <div class="flex items-center justify-between mb-8">
+        <div class="flex items-center justify-between mb-6">
             <div class="flex items-center gap-3">
-                <div class="w-10 h-10 bg-brand-600 rounded-lg flex items-center justify-center">
+                <div class="w-10 h-10 bg-brand-600 rounded-lg flex items-center justify-center shrink-0">
                     <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                     </svg>
                 </div>
                 <div>
                     <h1 class="text-xl font-bold text-white">DNS Sync Dashboard</h1>
-                    <p class="text-sm text-slate-400">OPNsense &rarr; Technitium DNS</p>
+                    <p class="text-xs text-slate-500">OPNsense &rarr; Technitium DNS</p>
                 </div>
             </div>
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-4">
                 <span id="status-badge" class="px-3 py-1 rounded-full text-xs font-medium bg-slate-700 text-slate-300">Loading...</span>
-                <span class="text-xs text-slate-500" id="refresh-timer">Auto-refresh: 15s</span>
+                <div class="text-right hidden sm:block">
+                    <div class="text-[10px] text-slate-600">Uptime: <span id="uptime" class="text-slate-400">-</span></div>
+                    <div class="text-[10px] text-slate-600">Refresh in <span id="countdown" class="text-slate-400">-</span>s</div>
+                </div>
             </div>
         </div>
 
+        <!-- Error Banner (hidden by default) -->
+        <div id="error-banner" class="hidden mb-4 bg-red-950/60 border border-red-900/50 rounded-xl px-4 py-3 flex items-start gap-3">
+            <svg class="w-5 h-5 text-red-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
+            </svg>
+            <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-red-400">Last sync failed</p>
+                <p class="text-xs text-red-400/70 mt-0.5 break-all" id="error-message"></p>
+            </div>
+        </div>
+
+        <!-- Connection Banner (hidden if disconnected) -->
+        <div id="connection-error" class="hidden mb-4 bg-amber-950/60 border border-amber-900/50 rounded-xl px-4 py-3 flex items-center gap-3">
+            <svg class="w-5 h-5 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636a9 9 0 11-12.728 0M12 9v4m0 4h.01"/>
+            </svg>
+            <p class="text-sm text-amber-400">Dashboard can't reach the API. Is the sync service running?</p>
+        </div>
+
         <!-- Stats Cards -->
-        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
             <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                <p class="text-xs text-slate-400 uppercase tracking-wider">Total Records</p>
+                <p class="text-[10px] text-slate-500 uppercase tracking-wider">Records</p>
                 <p class="text-2xl font-bold text-white mt-1" id="total-records">-</p>
             </div>
             <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                <p class="text-xs text-slate-400 uppercase tracking-wider">Last Added</p>
+                <p class="text-[10px] text-slate-500 uppercase tracking-wider">Added</p>
                 <p class="text-2xl font-bold text-emerald-400 mt-1" id="records-added">-</p>
             </div>
             <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                <p class="text-xs text-slate-400 uppercase tracking-wider">Last Updated</p>
+                <p class="text-[10px] text-slate-500 uppercase tracking-wider">Updated</p>
                 <p class="text-2xl font-bold text-amber-400 mt-1" id="records-updated">-</p>
             </div>
             <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                <p class="text-xs text-slate-400 uppercase tracking-wider">Last Deleted</p>
+                <p class="text-[10px] text-slate-500 uppercase tracking-wider">Deleted</p>
                 <p class="text-2xl font-bold text-red-400 mt-1" id="records-deleted">-</p>
             </div>
             <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                <p class="text-xs text-slate-400 uppercase tracking-wider">Sync Count</p>
-                <p class="text-2xl font-bold text-brand-500 mt-1" id="sync-count">-</p>
+                <p class="text-[10px] text-slate-500 uppercase tracking-wider">Syncs</p>
+                <p class="text-2xl font-bold text-brand-400 mt-1" id="sync-count">-</p>
             </div>
             <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                <p class="text-xs text-slate-400 uppercase tracking-wider">Errors</p>
+                <p class="text-[10px] text-slate-500 uppercase tracking-wider">Errors</p>
                 <p class="text-2xl font-bold text-red-400 mt-1" id="error-count">-</p>
             </div>
         </div>
 
         <!-- Info Bar -->
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-6 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div><span class="text-slate-400">Zone:</span> <span class="text-white font-mono" id="dns-zone">-</span></div>
-            <div><span class="text-slate-400">Source:</span> <span class="text-white" id="dhcp-source">-</span></div>
-            <div><span class="text-slate-400">Last Sync:</span> <span class="text-white" id="last-sync">-</span></div>
-            <div><span class="text-slate-400">Next Sync:</span> <span class="text-white" id="next-sync">-</span></div>
+        <div class="bg-slate-900/50 border border-slate-800 rounded-xl px-4 py-3 mb-5 flex flex-wrap gap-x-6 gap-y-2 text-xs">
+            <div><span class="text-slate-500">Zone</span> <span class="text-white font-mono ml-1" id="dns-zone">-</span></div>
+            <div><span class="text-slate-500">DHCP</span> <span class="text-white ml-1" id="dhcp-source">-</span></div>
+            <div><span class="text-slate-500">Interval</span> <span class="text-white ml-1" id="sync-interval">-</span></div>
+            <div><span class="text-slate-500">Last Sync</span> <span class="text-white ml-1" id="last-sync">-</span></div>
+            <div><span class="text-slate-500">Next Sync</span> <span class="text-white ml-1" id="next-sync">-</span></div>
+            <div class="hidden sm:block"><span class="text-slate-500">OPNsense</span> <span class="text-slate-400 font-mono ml-1" id="opnsense-url">-</span></div>
+            <div class="hidden sm:block"><span class="text-slate-500">Technitium</span> <span class="text-slate-400 font-mono ml-1" id="technitium-url">-</span></div>
         </div>
 
-        <!-- Main Content: Records + Logs -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <!-- DNS Records Table -->
-            <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-                <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+        <!-- Main: Records + Logs -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+            <!-- DNS Records -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col" style="max-height:600px">
+                <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between shrink-0">
                     <h2 class="text-sm font-semibold text-white">DNS Records</h2>
                     <div class="flex items-center gap-2">
                         <input type="text" id="search-records" placeholder="Filter..."
-                            class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-brand-500 w-40">
-                        <span class="text-xs text-slate-400" id="records-count">0 records</span>
+                            class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-brand-500 w-36">
+                        <span class="text-[10px] text-slate-500 whitespace-nowrap" id="records-count">0</span>
                     </div>
                 </div>
-                <div class="overflow-y-auto max-h-[500px]">
-                    <table class="w-full text-sm">
-                        <thead class="bg-slate-800/50 sticky top-0">
+                <div class="overflow-y-auto flex-1">
+                    <table class="w-full text-xs">
+                        <thead class="bg-slate-800/60 sticky top-0">
                             <tr>
-                                <th class="text-left px-4 py-2 text-xs text-slate-400 font-medium">Hostname</th>
-                                <th class="text-left px-4 py-2 text-xs text-slate-400 font-medium">IP Address</th>
-                                <th class="text-left px-4 py-2 text-xs text-slate-400 font-medium">FQDN</th>
+                                <th class="text-left px-4 py-2 text-[10px] text-slate-400 font-medium sort-header" data-sort="hostname">Hostname</th>
+                                <th class="text-left px-4 py-2 text-[10px] text-slate-400 font-medium sort-header" data-sort="ip">IP</th>
+                                <th class="text-left px-4 py-2 text-[10px] text-slate-400 font-medium sort-header hidden sm:table-cell" data-sort="fqdn">FQDN</th>
                             </tr>
                         </thead>
-                        <tbody id="records-table" class="divide-y divide-slate-800/50">
-                            <tr><td colspan="3" class="px-4 py-8 text-center text-slate-500">Waiting for first sync...</td></tr>
+                        <tbody id="records-table" class="divide-y divide-slate-800/30">
+                            <tr><td colspan="3" class="px-4 py-10 text-center text-slate-600 text-xs">Waiting for first sync...</td></tr>
                         </tbody>
                     </table>
                 </div>
             </div>
 
-            <!-- Logs Panel -->
-            <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-                <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
-                    <h2 class="text-sm font-semibold text-white">Recent Logs</h2>
-                    <select id="log-filter" class="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white focus:outline-none">
-                        <option value="all">All</option>
-                        <option value="ERROR">Errors</option>
-                        <option value="WARNING">Warnings</option>
-                        <option value="INFO">Info</option>
-                    </select>
+            <!-- Logs -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col" style="max-height:600px">
+                <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between shrink-0">
+                    <h2 class="text-sm font-semibold text-white">Logs</h2>
+                    <div class="flex items-center gap-2">
+                        <select id="log-filter" class="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none">
+                            <option value="all">All levels</option>
+                            <option value="ERROR">Errors</option>
+                            <option value="WARNING">Warnings</option>
+                            <option value="INFO">Info</option>
+                            <option value="DEBUG">Debug</option>
+                        </select>
+                        <button id="logs-scroll-btn" title="Scroll to top" class="text-slate-600 hover:text-slate-300 p-1">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+                        </button>
+                    </div>
                 </div>
-                <div class="overflow-y-auto max-h-[500px] p-2" id="logs-container">
-                    <p class="text-slate-500 text-xs p-2">Waiting for logs...</p>
+                <div class="overflow-y-auto flex-1 p-1.5" id="logs-container">
+                    <p class="text-slate-600 text-xs p-2">Waiting for logs...</p>
                 </div>
             </div>
         </div>
 
         <!-- Footer -->
-        <div class="mt-6 text-center text-xs text-slate-600">
+        <div class="mt-6 text-center text-[11px] text-slate-600">
             OPNsense Technitium DNS Sync &middot;
-            <a href="https://github.com/RiDDiX/opnsense-technitium-sync" target="_blank" class="text-slate-500 hover:text-brand-500">GitHub</a>
+            <a href="https://github.com/RiDDiX/opnsense-technitium-sync" target="_blank" class="text-slate-500 hover:text-brand-400">GitHub</a>
             &middot;
-            <a href="https://www.paypal.me/RiDDiX93" target="_blank" class="text-slate-500 hover:text-brand-500">☕ Buy me a coffee</a>
+            <a href="https://www.paypal.me/RiDDiX93" target="_blank" class="text-slate-500 hover:text-brand-400">&#9749; Buy me a coffee</a>
         </div>
     </div>
 
     <script>
-        const REFRESH_INTERVAL = 15000;
+        const REFRESH_MS = 15000;
         let searchFilter = '';
         let logFilter = 'all';
+        let lastEntries = [];
+        let lastLogs = [];
+        let sortCol = 'hostname';
+        let sortDir = 'asc';
+        let countdownSec = REFRESH_MS / 1000;
+        let connected = true;
+        let uptimeStart = null;
 
-        document.getElementById('search-records').addEventListener('input', (e) => {
+        // event listeners
+        document.getElementById('search-records').addEventListener('input', e => {
             searchFilter = e.target.value.toLowerCase();
             renderRecords(lastEntries);
         });
-        document.getElementById('log-filter').addEventListener('change', (e) => {
+        document.getElementById('log-filter').addEventListener('change', e => {
             logFilter = e.target.value;
             renderLogs(lastLogs);
         });
-
-        let lastEntries = [];
-        let lastLogs = [];
+        document.getElementById('logs-scroll-btn').addEventListener('click', () => {
+            document.getElementById('logs-container').scrollTop = 0;
+        });
+        document.querySelectorAll('.sort-header').forEach(th => {
+            th.addEventListener('click', () => {
+                const col = th.dataset.sort;
+                if (sortCol === col) {
+                    sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+                } else {
+                    sortCol = col;
+                    sortDir = 'asc';
+                }
+                document.querySelectorAll('.sort-header').forEach(h => h.classList.remove('asc', 'desc'));
+                th.classList.add(sortDir);
+                renderRecords(lastEntries);
+            });
+        });
+        // mark default sort header
+        document.querySelector('[data-sort="hostname"]').classList.add('asc');
 
         function formatTime(isoStr) {
             if (!isoStr) return '-';
             const d = new Date(isoStr);
-            return d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) +
-                   ' ' + d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+            if (isNaN(d.getTime())) return '-';
+            return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+
+        function formatDateTime(isoStr) {
+            if (!isoStr) return '-';
+            const d = new Date(isoStr);
+            if (isNaN(d.getTime())) return '-';
+            return d.toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+
+        function formatUptime(isoStr) {
+            if (!isoStr) return '-';
+            const start = new Date(isoStr);
+            if (isNaN(start.getTime())) return '-';
+            let sec = Math.floor((Date.now() - start.getTime()) / 1000);
+            if (sec < 0) sec = 0;
+            const d = Math.floor(sec / 86400);
+            const h = Math.floor((sec % 86400) / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            if (d > 0) return d + 'd ' + h + 'h';
+            if (h > 0) return h + 'h ' + m + 'm';
+            return m + 'm';
+        }
+
+        function sortEntries(entries) {
+            return [...entries].sort((a, b) => {
+                let va = (a[sortCol] || '').toLowerCase();
+                let vb = (b[sortCol] || '').toLowerCase();
+                if (sortCol === 'ip') {
+                    // numeric IP sort
+                    const na = va.split('.').map(Number);
+                    const nb = vb.split('.').map(Number);
+                    for (let i = 0; i < 4; i++) {
+                        if ((na[i]||0) !== (nb[i]||0)) return sortDir === 'asc' ? (na[i]||0) - (nb[i]||0) : (nb[i]||0) - (na[i]||0);
+                    }
+                    return 0;
+                }
+                if (va < vb) return sortDir === 'asc' ? -1 : 1;
+                if (va > vb) return sortDir === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+
+        function esc(str) {
+            const el = document.createElement('span');
+            el.textContent = str;
+            return el.innerHTML;
         }
 
         function renderRecords(entries) {
@@ -925,43 +1035,34 @@ def get_dashboard_html():
             const tbody = document.getElementById('records-table');
             const filtered = entries.filter(e =>
                 !searchFilter ||
-                e.hostname.includes(searchFilter) ||
+                e.hostname.toLowerCase().includes(searchFilter) ||
                 e.ip.includes(searchFilter) ||
-                e.fqdn.includes(searchFilter)
+                (e.fqdn && e.fqdn.toLowerCase().includes(searchFilter))
             );
-            document.getElementById('records-count').textContent = filtered.length + ' records';
+            const sorted = sortEntries(filtered);
+            document.getElementById('records-count').textContent = filtered.length + (filtered.length !== entries.length ? '/' + entries.length : '');
 
-            if (filtered.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="3" class="px-4 py-8 text-center text-slate-500">No records found</td></tr>';
+            if (sorted.length === 0) {
+                tbody.innerHTML = entries.length === 0
+                    ? '<tr><td colspan="3" class="px-4 py-10 text-center text-slate-600 text-xs">No records synced yet</td></tr>'
+                    : '<tr><td colspan="3" class="px-4 py-10 text-center text-slate-600 text-xs">No records match filter</td></tr>';
                 return;
             }
-            tbody.innerHTML = filtered.map(e => `
-                <tr class="hover:bg-slate-800/50 transition-colors">
-                    <td class="px-4 py-2 font-mono text-emerald-400 text-xs">${e.hostname}</td>
-                    <td class="px-4 py-2 font-mono text-slate-300 text-xs">${e.ip}</td>
-                    <td class="px-4 py-2 font-mono text-slate-500 text-xs">${e.fqdn}</td>
+            tbody.innerHTML = sorted.map(e => `
+                <tr class="hover:bg-slate-800/40 transition-colors">
+                    <td class="px-4 py-1.5 font-mono text-emerald-400">${esc(e.hostname)}</td>
+                    <td class="px-4 py-1.5 font-mono text-slate-300">${esc(e.ip)}</td>
+                    <td class="px-4 py-1.5 font-mono text-slate-600 hidden sm:table-cell">${esc(e.fqdn || '')}</td>
                 </tr>
             `).join('');
         }
 
-        function levelColor(level) {
-            switch(level) {
-                case 'ERROR': return 'text-red-400';
-                case 'WARNING': return 'text-amber-400';
-                case 'DEBUG': return 'text-slate-500';
-                default: return 'text-slate-300';
-            }
-        }
-
-        function levelBadge(level) {
-            const colors = {
-                'ERROR': 'bg-red-900/50 text-red-400',
-                'WARNING': 'bg-amber-900/50 text-amber-400',
-                'INFO': 'bg-slate-800 text-slate-400',
-                'DEBUG': 'bg-slate-800/50 text-slate-600',
-            };
-            return colors[level] || colors['INFO'];
-        }
+        const LEVEL_BADGE = {
+            'ERROR':   'bg-red-900/50 text-red-400 border border-red-900/30',
+            'WARNING': 'bg-amber-900/40 text-amber-400 border border-amber-900/30',
+            'INFO':    'bg-slate-800/80 text-slate-400 border border-slate-700/50',
+            'DEBUG':   'bg-slate-800/40 text-slate-600 border border-slate-800/50',
+        };
 
         function renderLogs(logs) {
             lastLogs = logs;
@@ -969,15 +1070,42 @@ def get_dashboard_html():
             const filtered = logFilter === 'all' ? logs : logs.filter(l => l.level === logFilter);
 
             if (filtered.length === 0) {
-                container.innerHTML = '<p class="text-slate-500 text-xs p-2">No logs matching filter</p>';
+                container.innerHTML = '<p class="text-slate-600 text-xs p-3">No logs' + (logFilter !== 'all' ? ' matching filter' : '') + '</p>';
                 return;
             }
-            container.innerHTML = filtered.map(l => `
-                <div class="log-line flex items-start gap-2 px-2 py-1 rounded hover:bg-slate-800/50 ${levelColor(l.level)}">
-                    <span class="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${levelBadge(l.level)}">${l.level}</span>
-                    <span class="break-all">${l.message}</span>
-                </div>
-            `).join('');
+            container.innerHTML = filtered.map(l => {
+                const badge = LEVEL_BADGE[l.level] || LEVEL_BADGE['INFO'];
+                const ts = l.time ? l.time.split(' - ')[0].split(',')[0].split(' ').pop() || '' : '';
+                return `<div class="log-line flex items-start gap-2 px-2 py-0.5 rounded hover:bg-slate-800/40">
+                    <span class="shrink-0 text-[9px] text-slate-600 font-mono w-16 text-right pt-0.5">${esc(ts)}</span>
+                    <span class="shrink-0 px-1.5 py-0 rounded text-[9px] font-medium ${badge}">${l.level.slice(0,4)}</span>
+                    <span class="break-all text-slate-300">${esc(l.message)}</span>
+                </div>`;
+            }).join('');
+        }
+
+        function updateBadge(status) {
+            const badge = document.getElementById('status-badge');
+            if (!status.last_sync) {
+                badge.textContent = 'Waiting...';
+                badge.className = 'px-3 py-1 rounded-full text-xs font-medium bg-slate-700 text-slate-300';
+            } else if (status.last_sync_success) {
+                badge.innerHTML = '<span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 pulse-dot"></span>Healthy';
+                badge.className = 'px-3 py-1 rounded-full text-xs font-medium bg-emerald-900/40 text-emerald-400 border border-emerald-800/50 flex items-center';
+            } else {
+                badge.innerHTML = '<span class="inline-block w-1.5 h-1.5 rounded-full bg-red-400 mr-1.5"></span>Error';
+                badge.className = 'px-3 py-1 rounded-full text-xs font-medium bg-red-900/40 text-red-400 border border-red-800/50 flex items-center';
+            }
+        }
+
+        function updateErrorBanner(status) {
+            const banner = document.getElementById('error-banner');
+            if (status.last_error && !status.last_sync_success) {
+                document.getElementById('error-message').textContent = status.last_error;
+                banner.classList.remove('hidden');
+            } else {
+                banner.classList.add('hidden');
+            }
         }
 
         async function refresh() {
@@ -986,45 +1114,56 @@ def get_dashboard_html():
                     fetch('/api/status'),
                     fetch('/api/logs')
                 ]);
+                if (!statusRes.ok || !logsRes.ok) throw new Error('API returned ' + statusRes.status);
+
                 const status = await statusRes.json();
                 const logs = await logsRes.json();
 
-                // Update stats
+                // connection ok
+                if (!connected) {
+                    connected = true;
+                    document.getElementById('connection-error').classList.add('hidden');
+                }
+
+                // stats
                 document.getElementById('total-records').textContent = status.total_records;
-                document.getElementById('records-added').textContent = '+' + status.records_added;
-                document.getElementById('records-updated').textContent = '~' + status.records_updated;
-                document.getElementById('records-deleted').textContent = '-' + status.records_deleted;
+                document.getElementById('records-added').textContent = status.records_added > 0 ? '+' + status.records_added : '0';
+                document.getElementById('records-updated').textContent = status.records_updated > 0 ? '~' + status.records_updated : '0';
+                document.getElementById('records-deleted').textContent = status.records_deleted > 0 ? '-' + status.records_deleted : '0';
                 document.getElementById('sync-count').textContent = status.sync_count;
                 document.getElementById('error-count').textContent = status.error_count;
 
-                // Info bar
-                document.getElementById('dns-zone').textContent = status.dns_zone;
-                document.getElementById('dhcp-source').textContent = status.dhcp_source;
-                document.getElementById('last-sync').textContent = formatTime(status.last_sync);
-                document.getElementById('next-sync').textContent = formatTime(status.next_sync);
+                // info bar
+                document.getElementById('dns-zone').textContent = status.dns_zone || '-';
+                document.getElementById('dhcp-source').textContent = status.dhcp_source || '-';
+                document.getElementById('sync-interval').textContent = (status.sync_interval || '-') + ' min';
+                document.getElementById('last-sync').textContent = formatDateTime(status.last_sync);
+                document.getElementById('next-sync').textContent = formatDateTime(status.next_sync);
+                document.getElementById('opnsense-url').textContent = status.opnsense_url || '-';
+                document.getElementById('technitium-url').textContent = status.technitium_url || '-';
+                uptimeStart = status.uptime_start;
+                document.getElementById('uptime').textContent = formatUptime(uptimeStart);
 
-                // Status badge
-                const badge = document.getElementById('status-badge');
-                if (status.last_sync_success) {
-                    badge.textContent = 'Healthy';
-                    badge.className = 'px-3 py-1 rounded-full text-xs font-medium bg-emerald-900/50 text-emerald-400 border border-emerald-800';
-                } else if (status.last_sync === null) {
-                    badge.textContent = 'Waiting...';
-                    badge.className = 'px-3 py-1 rounded-full text-xs font-medium bg-slate-700 text-slate-300';
-                } else {
-                    badge.textContent = 'Error';
-                    badge.className = 'px-3 py-1 rounded-full text-xs font-medium bg-red-900/50 text-red-400 border border-red-800';
-                }
-
+                updateBadge(status);
+                updateErrorBanner(status);
                 renderRecords(status.current_entries || []);
                 renderLogs(logs || []);
             } catch (err) {
-                console.error('Refresh failed:', err);
+                console.error('Refresh error:', err);
+                connected = false;
+                document.getElementById('connection-error').classList.remove('hidden');
             }
+            countdownSec = REFRESH_MS / 1000;
         }
 
+        setInterval(() => {
+            countdownSec = Math.max(0, countdownSec - 1);
+            document.getElementById('countdown').textContent = countdownSec;
+            if (uptimeStart) document.getElementById('uptime').textContent = formatUptime(uptimeStart);
+        }, 1000);
+
         refresh();
-        setInterval(refresh, REFRESH_INTERVAL);
+        setInterval(refresh, REFRESH_MS);
     </script>
 </body>
 </html>'''
