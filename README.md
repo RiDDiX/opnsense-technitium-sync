@@ -102,8 +102,9 @@ The token needs access to these endpoints:
 |----------|----------|
 | `/api/zones/list` | Check if zone exists |
 | `/api/zones/create` | Create zone on first run |
-| `/api/zones/records` | Read existing records |
+| `/api/zones/records/get` | Read existing records |
 | `/api/zones/records/add` | Add new A-records |
+| `/api/zones/records/update` | Update changed A-records |
 | `/api/zones/records/delete` | Clean up stale records |
 
 The default admin token covers all of this. The zone (`home.arpa`) gets created automatically if it doesn't exist yet.
@@ -149,6 +150,8 @@ Every `SYNC_INTERVAL_MINUTES` the script:
 2. Merges with any `STATIC_ENTRIES`
 3. Diffs against existing Technitium records
 4. Adds/updates/deletes as needed
+
+**Safe deletion:** Only records tagged with the `managed-by:opnsense-sync` comment are eligible for deletion. Manually created records in Technitium are never touched. If the OPNsense fetch returns empty (e.g. API down), all deletions are skipped as a fail-safe.
 
 ## Troubleshooting
 

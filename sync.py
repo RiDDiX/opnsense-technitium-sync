@@ -15,6 +15,8 @@ from urllib3.exceptions import InsecureRequestWarning
 
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
+MANAGED_COMMENT = "managed-by:opnsense-sync"
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -167,8 +169,8 @@ class OPNsenseAPI:
             ("GET",  "/api/kea/dhcpv4/get"),
             ("GET",  "/api/kea/service/status"),
             # Dnsmasq
-            ("GET",  "/api/dnsmasq/leases/searchLease"),
-            ("POST", "/api/dnsmasq/leases/searchLease"),
+            ("GET",  "/api/dnsmasq/leases/search"),
+            ("POST", "/api/dnsmasq/leases/search"),
             ("GET",  "/api/dnsmasq/settings/get"),
             # ISC DHCP (legacy)
             ("GET",  "/api/dhcpd/leases/searchLease"),
@@ -261,7 +263,7 @@ class OPNsenseAPI:
         return entries
     
     def _get_dnsmasq_leases(self) -> List[DnsEntry]:
-        data = self._try_endpoint("/api/dnsmasq/leases/searchLease")
+        data = self._try_endpoint("/api/dnsmasq/leases/search")
         if data is None:
             return []
         
@@ -402,20 +404,27 @@ class TechnitiumAPI:
         self.token = token
         self.session = requests.Session()
     
-    def _api_call(self, path: str, params: Optional[Dict] = None) -> Dict:
+    def _api_call(self, path: str, params: Optional[Dict] = None, retries: int = 3) -> Dict:
         url = f"{self.base_url}/api{path}"
         
         if params is None:
             params = {}
         params['token'] = self.token
         
-        try:
-            response = self.session.get(url, params=params, timeout=30)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            log.error(f"Technitium API Fehler: {e}")
-            return {'status': 'error', 'errorMessage': str(e)}
+        for attempt in range(retries):
+            try:
+                response = self.session.get(url, params=params, timeout=30)
+                response.raise_for_status()
+                return response.json()
+            except requests.exceptions.RequestException as e:
+                err_msg = str(e).replace(self.token, '***')
+                if attempt < retries - 1:
+                    wait = 2 ** attempt
+                    log.warning(f"Technitium API Fehler (Versuch {attempt + 1}/{retries}): {err_msg}, retry in {wait}s")
+                    time.sleep(wait)
+                else:
+                    log.error(f"Technitium API Fehler nach {retries} Versuchen: {err_msg}")
+                    return {'status': 'error', 'errorMessage': err_msg}
     
     def list_zones(self) -> List[Dict]:
         result = self._api_call('/zones/list')
@@ -448,7 +457,7 @@ class TechnitiumAPI:
         log.warning(f"Konnte Records nicht abrufen: {result.get('errorMessage', 'unbekannt')}")
         return []
     
-    def get_a_records(self, zone_name: str) -> Dict[str, str]:
+    def get_a_records(self, zone_name: str) -> Dict[str, Dict]:
         records = self.get_records(zone_name)
         a_records = {}
         zone_suffix = '.' + zone_name
@@ -469,11 +478,14 @@ class TechnitiumAPI:
                 continue
             
             if short_name:
-                a_records[short_name] = ip
+                a_records[short_name] = {
+                    'ip': ip,
+                    'comments': record.get('comments', ''),
+                }
         
         return a_records
     
-    def add_record(self, zone_name: str, name: str, record_type: str, value: str, ttl: int = 300) -> bool:
+    def add_record(self, zone_name: str, name: str, record_type: str, value: str, ttl: int = 300, comments: Optional[str] = None) -> bool:
         if name and name != '@':
             fqdn = f"{name}.{zone_name}"
         else:
@@ -483,9 +495,14 @@ class TechnitiumAPI:
             'zone': zone_name,
             'domain': fqdn,
             'type': record_type,
-            'value': value,
             'ttl': ttl
         }
+        if record_type in ('A', 'AAAA'):
+            params['ipAddress'] = value
+        else:
+            params['value'] = value
+        if comments:
+            params['comments'] = comments
         
         result = self._api_call('/zones/records/add', params)
         
@@ -513,7 +530,10 @@ class TechnitiumAPI:
             'type': record_type
         }
         if value:
-            params['value'] = value
+            if record_type in ('A', 'AAAA'):
+                params['ipAddress'] = value
+            else:
+                params['value'] = value
         
         result = self._api_call('/zones/records/delete', params)
         
@@ -524,9 +544,31 @@ class TechnitiumAPI:
             log.error(f"Konnte Record nicht löschen: {result}")
             return False
     
-    def update_record(self, zone_name: str, name: str, record_type: str, new_value: str, ttl: int = 300) -> bool:
-        self.delete_record(zone_name, name, record_type)
-        return self.add_record(zone_name, name, record_type, new_value, ttl)
+    def update_record(self, zone_name: str, name: str, record_type: str, new_value: str, old_value: Optional[str] = None, ttl: int = 300, comments: Optional[str] = None) -> bool:
+        if name and name != '@':
+            fqdn = f"{name}.{zone_name}"
+        else:
+            fqdn = zone_name
+        
+        if record_type in ('A', 'AAAA') and old_value:
+            params = {
+                'zone': zone_name,
+                'domain': fqdn,
+                'type': record_type,
+                'ipAddress': old_value,
+                'newIpAddress': new_value,
+                'ttl': ttl
+            }
+            if comments:
+                params['comments'] = comments
+            result = self._api_call('/zones/records/update', params)
+            if result.get('status') == 'ok':
+                log.debug(f"Record aktualisiert: {name}.{zone_name} -> {new_value}")
+                return True
+            log.debug(f"Update API fehlgeschlagen, fallback zu delete+add: {result.get('errorMessage', '')}")
+        
+        self.delete_record(zone_name, name, record_type, old_value)
+        return self.add_record(zone_name, name, record_type, new_value, ttl, comments)
 
 
 class DNSSync:
@@ -618,8 +660,13 @@ class DNSSync:
             entries = list(all_entries.values())
             log.info(f"Gesamt: {len(entries)} eindeutige Einträge")
             
+            fetch_empty = not dhcp_entries and not static_mappings
+            
             if not entries:
-                log.warning("Keine Einträge zu synchronisieren")
+                if fetch_empty:
+                    log.warning("Keine Einträge gefunden - OPNsense-Abfrage leer, überspringe Löschungen")
+                else:
+                    log.warning("Keine Einträge zu synchronisieren")
                 with sync_state._lock:
                     sync_state.last_sync = datetime.now(timezone.utc).isoformat()
                     sync_state.last_sync_success = True
@@ -642,35 +689,43 @@ class DNSSync:
             for hostname, ip in desired_records.items():
                 if hostname not in current_records:
                     to_add.append((hostname, ip))
-                elif current_records[hostname] != ip:
-                    to_update.append((hostname, ip))
+                elif current_records[hostname]['ip'] != ip:
+                    to_update.append((hostname, ip, current_records[hostname]['ip']))
             
-            opnsense_hostnames = set(desired_records.keys())
-            manual_hostnames = {e.hostname for e in manual_entries}
-            for hostname in current_records:
-                if hostname not in opnsense_hostnames and hostname not in manual_hostnames:
-                    to_delete.append(hostname)
+            if fetch_empty:
+                log.warning("OPNsense-Abfrage leer, überspringe Löschungen")
+            else:
+                opnsense_hostnames = set(desired_records.keys())
+                manual_hostnames = {e.hostname for e in manual_entries}
+                for hostname, rec in current_records.items():
+                    if hostname in opnsense_hostnames or hostname in manual_hostnames:
+                        continue
+                    if hostname in ('@', 'ns', 'www', 'mail'):
+                        continue
+                    if MANAGED_COMMENT not in rec.get('comments', ''):
+                        log.debug(f"Überspringe fremden Record: {hostname}.{self.dns_zone} (kein Managed-Marker)")
+                        continue
+                    to_delete.append((hostname, rec['ip']))
             
             errors = 0
             
             for hostname, ip in to_add:
                 log.info(f"Hinzufügen: {hostname}.{self.dns_zone} -> {ip}")
-                if not self.technitium.add_record(self.dns_zone, hostname, 'A', ip):
+                if not self.technitium.add_record(self.dns_zone, hostname, 'A', ip, comments=MANAGED_COMMENT):
                     errors += 1
             
-            for hostname, ip in to_update:
-                log.info(f"Aktualisieren: {hostname}.{self.dns_zone} -> {ip}")
-                if not self.technitium.update_record(self.dns_zone, hostname, 'A', ip):
+            for hostname, new_ip, old_ip in to_update:
+                log.info(f"Aktualisieren: {hostname}.{self.dns_zone} -> {new_ip}")
+                if not self.technitium.update_record(self.dns_zone, hostname, 'A', new_ip, old_value=old_ip, comments=MANAGED_COMMENT):
                     errors += 1
             
-            for hostname in to_delete:
-                if hostname in ('@', 'ns', 'www', 'mail'):
-                    continue
-                log.info(f"Löschen: {hostname}.{self.dns_zone}")
-                if not self.technitium.delete_record(self.dns_zone, hostname, 'A'):
+            for hostname, ip in to_delete:
+                log.info(f"Löschen: {hostname}.{self.dns_zone} ({ip})")
+                if not self.technitium.delete_record(self.dns_zone, hostname, 'A', ip):
                     errors += 1
             
-            log.info(f"Sync complete: +{len(to_add)} ~{len(to_update)} -{len(to_delete)}" + (f" ({errors} Fehler)" if errors else ""))
+            deleted_count = len(to_delete)
+            log.info(f"Sync complete: +{len(to_add)} ~{len(to_update)} -{deleted_count}" + (f" ({errors} Fehler)" if errors else ""))
             
             with sync_state._lock:
                 sync_state.last_sync = datetime.now(timezone.utc).isoformat()
@@ -683,7 +738,7 @@ class DNSSync:
                     sync_state.last_error = None
                 sync_state.records_added = len(to_add)
                 sync_state.records_updated = len(to_update)
-                sync_state.records_deleted = len(to_delete)
+                sync_state.records_deleted = deleted_count
                 sync_state.total_records = len(entries)
                 sync_state.current_entries = sorted(
                     [{'hostname': e.hostname, 'ip': e.ip, 'fqdn': f"{e.hostname}.{self.dns_zone}"} for e in entries],
